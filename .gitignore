@@ -1,3 +1,6 @@
+# Tests (uso interno de desarrollo)
+test_*.py
+
 # Bases de datos locales (generadas en tiempo de ejecución)
 *.db
 *.db-shm
