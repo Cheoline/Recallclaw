@@ -33,11 +33,18 @@ Esto permite que una IA recién creada aprenda instantáneamente las reglas de c
 
 ## Instalación
 
+### Para usuarios
+```bash
+pip install recallclaw
+```
+
+### Para desarrolladores (modificar el código)
 ```bash
 git clone https://github.com/Cheoline/Recallclaw.git
 cd Recallclaw
 pip install -e .
 ```
+> `pip install -e .` instala el paquete en modo editable desde la carpeta actual. Cualquier cambio en el código se aplica de inmediato sin reinstalar.
 
 ### Dependencias
 
