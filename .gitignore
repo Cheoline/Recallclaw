@@ -1,0 +1,38 @@
+# Bases de datos locales (generadas en tiempo de ejecución)
+*.db
+*.db-shm
+*.db-wal
+
+# Exportaciones de la Colmena
+colmena_*.json
+rosetta_*.json
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Entornos virtuales
+venv/
+.venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
