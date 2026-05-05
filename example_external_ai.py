@@ -1,5 +1,14 @@
-# Este archivo simula ser una IA o agente totalmente independiente (ej. NanoClaw o un Bot de Trading).
-# Se ejecuta DESDE OTRO LUGAR, pero importa el cerebro RecallClaw.
+"""
+ARCHIVO DE EJEMPLO — Solo para referencia del desarrollador
+============================================================
+Este archivo NO es parte del sistema RecallClaw.
+Es un ejemplo de cómo cualquier agente externo (un chatbot, un bot de trading,
+NanoClaw, o cualquier otra IA) puede conectarse a RecallClaw y usarlo como
+su capa de memoria a largo plazo.
+
+No es necesario modificar ni ejecutar este archivo para usar RecallClaw.
+Sirve únicamente como guía de integración.
+"""
 
 import sys
 import json
