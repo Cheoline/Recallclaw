@@ -53,6 +53,8 @@ pip install spacy sentence-transformers torch
 python -m spacy download es_core_news_sm
 ```
 
+> **Nota sobre el modelo matemático:** La primera vez que ejecutes RecallClaw, la librería `sentence-transformers` descargará automáticamente el modelo de IA vectorial (`paraphrase-multilingual-MiniLM-L12-v2`, aprox. 470 MB). Solo requiere internet la primera vez.
+
 Requiere [Ollama](https://ollama.com/) corriendo localmente con un modelo instalado:
 ```bash
 ollama pull llama3.2:1b
