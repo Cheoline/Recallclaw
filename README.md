@@ -165,6 +165,11 @@ recallclaw/
 
 ## Changelog
 
+### v1.8.0 — Cerebro Holístico y Votación Colectiva (Collective Scoring)
+- **[NUEVO] Votación Colectiva**: El motor ya no elige un fragmento ganador, sino que suma la relevancia de todos los fragmentos de una misma historia. Si una pregunta menciona "reloj", la historia del reloj acumula puntos en todos sus fragmentos, aplastando cualquier interferencia de otros cuentos.
+- **[NUEVO] Identificación de Documento Ganador**: El sistema identifica qué historia (Documento) es la más probable como un todo, evitando la confusión palabra por palabra.
+- **[FIX] Contexto de Comprensión Total**: Una vez identificada la historia ganadora, el motor entrega a la IA el documento íntegro, permitiéndole responder con conocimiento total de causa.
+
 ### v1.7.0 — Reconstrucción de Documentos (Source-based Recovery)
 - **[NUEVO] Sello de Origen (Source Hash)**: Cada vez que se memoriza un texto, se le asigna un sello único a todos sus fragmentos. Esto permite que el motor sepa exactamente qué trozos de memoria pertenecen al mismo documento original.
 - **[NUEVO] Reconstrucción Íntegra**: Al buscar, si el motor encuentra un fragmento relevante, recupera AUTOMÁTICAMENTE toda la historia a la que pertenece. Esto garantiza que el LLM tenga el contexto completo (párrafos iniciales, medios y finales) y no alucine datos faltantes.

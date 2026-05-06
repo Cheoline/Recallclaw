@@ -352,56 +352,74 @@ class PositronicBrain:
 
     def ask(self, question: str) -> str:
         """
-        El Bibliotecario: Busca en la base de datos la respuesta a una pregunta.
-        Usa Reconstrucción de Documentos: si encuentra un fragmento relevante,
-        recupera la historia completa a la que pertenece para no perder el contexto.
+        El Bibliotecario (v1.8.0): Cerebro Holístico.
+        No busca fragmentos sueltos, sino que identifica la HISTORIA completa
+        más relevante mediante votación colectiva de sus fragmentos.
         """
-        print(f"[*] El Bibliotecario está analizando la pregunta: '{question}'")
+        print(f"[*] El Bibliotecario analizando pregunta: '{question}'")
         
         all_hashes = self.db.get_all_memory_hashes()
         if not all_hashes:
             return self._ask_lexicon(question)
         
-        # 1. Buscar el fragmento más relevante (Top 1)
-        candidatos = self.judge.search_best_memory(question, all_hashes, top_k=min(5, len(all_hashes)))
+        # 1. Recuperar una muestra amplia de candidatos (Top 15)
+        candidatos = self.judge.search_best_memory(question, all_hashes, top_k=min(15, len(all_hashes)))
         if not candidatos:
             return self._ask_lexicon(question)
 
-        # 2. Re-rankear para encontrar el fragmento ganador
-        mejores = self._get_top_relevant_snippets(question, candidatos, top_n=1)
-        if not mejores:
-            return "No tengo un recuerdo lo suficientemente claro sobre eso."
-
-        win_mid, win_score = mejores[0]
+        # 2. Puntuación Colectiva por Documento (Voting System)
+        # Agrupamos los fragmentos por su sello de origen y sumamos su relevancia
+        document_scores = {} # {source_hash: total_score}
         
-        # 3. RECONSTRUCCIÓN: Obtener el sello de origen y traer el documento completo
-        sello = self.db.get_memory_source_hash(win_mid)
-        if sello:
-            print(f"[*] Fragmento ganador pertenece al documento {sello[:8]}...")
-            fragmentos_documento = self.db.get_memories_by_source(sello)
-            contexto_unificado = "\n".join([f[1] for f in fragmentos_documento])
-            print(f"[*] Historia reconstruida: {len(fragmentos_documento)} fragmentos cargados.")
-        else:
-            # Fallback si el recuerdo es huérfano (versiones antiguas)
-            mem = self.recall(win_mid)
-            contexto_unificado = mem.get("original_text") or mem.get("reconstructed_lac", "")
+        all_topic_fps = {mid: fp for mid, fp in self.db.get_all_topic_fingerprints()}
+        palabras_pregunta = self._extract_content_words(question) or question
+        query_topic_tensor = self.judge.model.encode(palabras_pregunta, convert_to_tensor=True)
 
-        # 4. Prompt para el LLM
-        prompt = f"""Actúa como un Sistema de Memoria de alta precisión.
-Tu misión es responder basándote ÚNICAMENTE en el texto proporcionado abajo.
+        import numpy as np
+        import torch
+        from sentence_transformers import util
 
-REGLAS:
-1. Responde con datos exactos (años, nombres, materiales).
-2. Si la pregunta requiere datos que no están en el texto, di 'No tengo esa información'.
-3. NO inventes nada que no esté escrito explícitamente.
+        for vec_score, mid in candidatos:
+            sello = self.db.get_memory_source_hash(mid)
+            if not sello: continue
+            
+            # Calcular score combinado para este fragmento
+            topic_fp = all_topic_fps.get(mid)
+            topic_sim = 0
+            if topic_fp:
+                topic_tensor = torch.tensor(np.frombuffer(topic_fp, dtype=np.float32)).to(query_topic_tensor.device)
+                topic_sim = float(util.cos_sim(query_topic_tensor, topic_tensor)[0][0])
+            
+            combined_snippet_score = (vec_score * 0.4) + (topic_sim * 0.6)
+            
+            # Sumamos al total del documento (Votación Colectiva)
+            document_scores[sello] = document_scores.get(sello, 0) + combined_snippet_score
 
-Texto de referencia:
+        if not document_scores:
+            return "No tengo recuerdos claros sobre ese tema."
+
+        # 3. Elegir el documento ganador (La historia con más peso acumulado)
+        ganador_sello = max(document_scores, key=document_scores.get)
+        total_score = document_scores[ganador_sello]
+        
+        print(f"[*] Historia ganadora: {ganador_sello[:8]}... (Peso colectivo: {total_score:.2f})")
+
+        # 4. RECONSTRUCCIÓN ÍNTEGRA: Traer el documento completo
+        fragmentos_documento = self.db.get_memories_by_source(ganador_sello)
+        contexto_unificado = "\n".join([f[1] for f in fragmentos_documento])
+        
+        # 5. Prompt para el LLM con comprensión total
+        prompt = f"""Eres el Cerebro Positronico. Tienes acceso a un documento de memoria completo.
+Tu misión es responder la pregunta basándote en la totalidad del texto.
+
+TEXTO DE MEMORIA RECONSTRUIDO:
 {contexto_unificado}
 
-Pregunta: {question}
-Respuesta:"""
+PREGUNTA: {question}
 
-        print("[*] Generando respuesta con contexto íntegro...")
+INSTRUCCIÓN: Responde de forma precisa. Si se mencionan llaves, años o lugares, asegúrate de que pertenezcan a los eventos de este texto específico. Si el dato no está, di que no lo sabes."""
+
+        print(f"[*] Generando respuesta basada en {len(fragmentos_documento)} eventos conectados...")
         return self.llm.generate_response(prompt)
 
     def _get_top_relevant_snippets(self, question: str, candidatos: list, top_n: int = 3) -> list:
