@@ -165,6 +165,11 @@ recallclaw/
 
 ## Changelog
 
+### v1.5.0 — Coherencia Temática y Bloqueo de Interferencia (Anti-Mixing)
+- **[NUEVO] Filtrado por Ancla Temática**: El motor ahora elige un "Lead Snippet" (Ancla) y bloquea cualquier fragmento adicional que no sea coherente con el tema principal. Esto evita que historias diferentes (ej. dos cuentos distintos sobre llaves) se mezclen en la misma respuesta.
+- **[NUEVO] Umbral de Relevancia Dinámico**: Se aumentó la exigencia de similitud combinada a 0.42, garantizando que solo la información de alta calidad llegue al LLM.
+- **[FIX] Re-ranking con Peso Temático**: El Topic Fingerprint ahora pesa un 65% en la decisión final, priorizando el "qué trata" sobre el "cómo se dice".
+
 ### v1.4.0 — Fragmentación Semántica y Recuperación Multicapa
 - **[NUEVO] Fragmentación Semántica (Chunking)**: Ahora los textos largos se dividen automáticamente en fragmentos de ~120 palabras. Esto evita la "dilución" del significado y permite una búsqueda mucho más precisa.
 - **[NUEVO] Recuperación Multi-Snippet**: El motor ya no depende de un solo fragmento. Ahora recupera los **3 mejores fragmentos** relacionados y los une para dar una respuesta completa, ideal para cuentos o documentos largos.

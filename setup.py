@@ -5,7 +5,7 @@ with open("README.md", "r", encoding="utf-8") as f:
 
 setup(
     name="recallclaw",
-    version="1.4.0",
+    version="1.5.0",
     description="Motor de memoria semántica persistente para agentes de IA. Comprime, indexa y recupera recuerdos con búsqueda vectorial en dos fases y prevención de interferencia semántica.",
     long_description=long_description,
     long_description_content_type="text/markdown",

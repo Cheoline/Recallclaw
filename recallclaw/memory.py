@@ -388,32 +388,62 @@ Respuesta basada en evidencia:"""
 
     def _get_top_relevant_snippets(self, question: str, candidatos: list, top_n: int = 3) -> list:
         """
-        Filtra y re-rankea candidatos, devolviendo hasta top_n fragmentos que superen el umbral.
+        Filtra y re-rankea candidatos usando un sistema de Coherencia Temática.
+        Selecciona el mejor candidato como 'Ancla' y solo permite otros fragmentos
+        si su Topic Fingerprint es muy cercano al del ancla.
         """
+        import numpy as np
+        import torch
+        from sentence_transformers import util
+
         all_topic_fps = {mid: fp for mid, fp in self.db.get_all_topic_fingerprints()}
         
         # Pre-calcular embedding de tema para la pregunta
         palabras_pregunta = self._extract_content_words(question) or question
         query_topic_tensor = self.judge.model.encode(palabras_pregunta, convert_to_tensor=True)
 
-        scored_results = []
+        scored_candidates = []
         for vec_score, mid in candidatos:
             topic_fp = all_topic_fps.get(mid)
             if topic_fp is None:
                 combined = vec_score
+                topic_tensor = None
             else:
-                import numpy as np
-                import torch
-                from sentence_transformers import util
-                mem_topic_tensor = torch.tensor(np.frombuffer(topic_fp, dtype=np.float32)).to(query_topic_tensor.device)
-                topic_sim = float(util.cos_sim(query_topic_tensor, mem_topic_tensor)[0][0])
-                combined = (vec_score * 0.4) + (topic_sim * 0.6)
+                topic_tensor = torch.tensor(np.frombuffer(topic_fp, dtype=np.float32)).to(query_topic_tensor.device)
+                topic_sim = float(util.cos_sim(query_topic_tensor, topic_tensor)[0][0])
+                # Mayor peso al tema (65%) para evitar confusiones de vocabulario
+                combined = (vec_score * 0.35) + (topic_sim * 0.65)
             
-            if combined >= 0.35: # Umbral de relevancia
-                scored_results.append((mid, combined))
+            if combined >= 0.42: # Umbral de relevancia más estricto
+                scored_candidates.append({
+                    "mid": mid,
+                    "score": combined,
+                    "topic_tensor": topic_tensor
+                })
         
-        scored_results.sort(key=lambda x: x[1], reverse=True)
-        return scored_results[:top_n]
+        if not scored_candidates:
+            return []
+
+        # Ordenar por score combinado
+        scored_candidates.sort(key=lambda x: x["score"], reverse=True)
+        
+        # EL ANCLA: El mejor resultado define el TEMA de la respuesta
+        anchor = scored_candidates[0]
+        final_snippets = [(anchor["mid"], anchor["score"])]
+        
+        # Solo añadimos otros snippets si son temáticamente coherentes con el Ancla
+        # (Esto evita que una historia de 'llaves' se mezcle con una de 'relojes')
+        if anchor["topic_tensor"] is not None:
+            for other in scored_candidates[1:]:
+                if other["topic_tensor"] is not None:
+                    # Similitud entre el tema del ancla y el tema del candidato adicional
+                    coherence = float(util.cos_sim(anchor["topic_tensor"], other["topic_tensor"])[0][0])
+                    if coherence > 0.75: # Alta exigencia de coherencia temática
+                        final_snippets.append((other["mid"], other["score"]))
+                        if len(final_snippets) >= top_n:
+                            break
+        
+        return final_snippets
 
     def _ask_lexicon(self, question: str) -> str:
         """
