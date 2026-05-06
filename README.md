@@ -16,11 +16,15 @@ El sistema simula los ciclos biológicos de la memoria humana:
 
 - **Compresión Atómica (LAC)**: Reduce texto a tokens semánticos mínimos usando análisis morfológico NLP (spaCy). Ejemplo: `"El doctor recomendó agua"` → `doctorM recomendó aguaF`
 - **Almacenamiento Relacional**: Grafo SQLite con deduplicación de palabras. Una palabra = un ID. Si 1.000 recuerdos usan la palabra "agua", se guarda una sola vez.
-- **Búsqueda Vectorial (RAG)**: Convierte preguntas en vectores matemáticos y los compara con la memoria almacenada para recuperar el recuerdo más relevante.
-- **Prevención de Interferencia Semántica**: Etiqueta automáticamente los recuerdos con "Anclas de Contexto" para evitar que el LLM mezcle historias diferentes al recuperarlas tras los ciclos de sueño.
+- **Búsqueda Vectorial en Dos Fases (RAG)**: Primero encuentra candidatos por similitud semántica global, luego los re-rankea por *Topic Fingerprint* (similitud de las palabras clave de contenido) para elegir el recuerdo correcto incluso si varias historias comparten vocabulario superficial.
+- **Topic Fingerprint**: Cada recuerdo guarda un segundo vector calculado solo con sus palabras de contenido (sustantivos, verbos, nombres), sin stop words. Esto permite distinguir entre dos historias que comparten palabras comunes pero hablan de temas completamente distintos.
+- **Prevención de Interferencia Semántica**: Etiqueta automáticamente los recuerdos con anclas de sujeto (`[SUJETO:YO]`, `[SUJETO:TERCERO]`) para que el motor no confunda datos del usuario con datos de personas que el usuario menciona.
+- **Sanitización Nativa de Emojis**: Elimina automáticamente emojis del texto antes de comprimirlo, evitando ruido en los tensores vectoriales y el motor LAC.
+- **Filtro de Calidad Semántica**: Descarta automáticamente mensajes sin contenido valioso ("hola", "ok", "gracias") para no contaminar la base de recuerdos.
 - **Validación Semántica**: Un Juez interno verifica que cualquier compresión nueva mantenga el mismo significado original antes de guardarla permanentemente.
 - **Sueño Automático**: Un proceso en segundo plano ejecuta ciclos de consolidación y optimización de memoria de forma autónoma.
 - **La Colmena**: Intercambio criptográfico de vocabulario comprimido entre múltiples instancias (SHA-256). Las IAs comparten reglas de compresión sin compartir sus recuerdos privados.
+- **Agnóstico de Modelo LLM**: Compatible con cualquier modelo local de Ollama. Configurable en una sola línea al instanciar el cerebro.
 
 ## RosettaStone — El Árbitro Global
 
@@ -34,7 +38,12 @@ Esto permite que una IA recién creada aprenda instantáneamente las reglas de c
 
 ## Instalación
 
-### Para usuarios
+### Desde GitHub (última versión)
+```bash
+pip install git+https://github.com/Cheoline/Recallclaw.git
+```
+
+### Desde PyPI
 ```bash
 pip install recallclaw
 ```
@@ -50,7 +59,7 @@ pip install -e .
 ### Dependencias
 
 ```bash
-pip install spacy sentence-transformers torch
+pip install spacy sentence-transformers torch emoji
 python -m spacy download es_core_news_sm
 ```
 
@@ -59,6 +68,8 @@ python -m spacy download es_core_news_sm
 Requiere [Ollama](https://ollama.com/) corriendo localmente con un modelo instalado. Por defecto buscará `gemma3:4b`, pero es totalmente agnóstico y configurable:
 ```bash
 ollama pull gemma3:4b
+# o cualquier otro modelo que tengas instalado
+ollama pull llama3
 ```
 
 ## Uso rápido (modo básico)
@@ -66,7 +77,8 @@ ollama pull gemma3:4b
 ```python
 from recallclaw import PositronicBrain
 
-memoria = PositronicBrain(db_path="mi_memoria.db")
+# Configura el cerebro con tu modelo de Ollama
+memoria = PositronicBrain(db_path="mi_memoria.db", llm_model="gemma3:4b")
 
 # Guardar información
 memoria.memorize("El doctor Martínez recomendó tomar agua pura todos los días.")
@@ -90,9 +102,9 @@ from recallclaw import PositronicBrain
 brain = PositronicBrain(db_path="mi_memoria.db", llm_model="gemma3:4b")
 
 # Al recibir un mensaje del usuario:
-contexto = brain.get_context_for(user_message)    # 1. Busca recuerdos y arma el system prompt
-ai_response = mi_llm.chat(system=contexto, prompt=user_message)  # 2. Tu IA responde con contexto
-brain.memorize_user_input(user_message)            # 3. Solo guarda el input del usuario
+contexto = brain.get_context_for(user_message)                    # 1. Busca recuerdos y arma el system prompt
+ai_response = mi_llm.chat(system=contexto, prompt=user_message)   # 2. Tu IA responde con contexto
+brain.memorize_user_input(user_message)                            # 3. Solo guarda el input del usuario
 ```
 
 ### Métodos de alto nivel disponibles
@@ -102,16 +114,50 @@ brain.memorize_user_input(user_message)            # 3. Solo guarda el input del
 | `memorize_user_input(msg)` | Guarda SOLO el input del usuario. Filtra emojis, mensajes triviales y respuestas de IA automáticamente. |
 | `memorize_conversation(user_input, ai_response)` | Acepta el turno completo pero descarta la respuesta de la IA. Solo persiste lo que dijo el usuario. |
 | `get_context_for(question)` | Busca en la memoria vectorial y entrega un `system_prompt` listo para inyectar en cualquier LLM. |
+| `memorize(text, context, auto_context)` | API de bajo nivel. Acepta contexto explícito o infiere uno automáticamente. |
+
+### Parámetros de configuración de `PositronicBrain`
+
+| Parámetro | Por defecto | Descripción |
+|---|---|---|
+| `db_path` | `"positronic_brain.db"` | Ruta del archivo SQLite donde se almacenan los recuerdos. |
+| `llm_model` | `"gemma3:4b"` | Nombre del modelo de Ollama que usará el Bibliotecario para responder. |
+| `max_usage_limit` | `1000` | Número máximo de usos de un nodo del Lexicon antes de sellarlo y crear uno nuevo. |
+
+## Cómo funciona la búsqueda (Anti-Confusión de Historias)
+
+El motor usa un sistema de **búsqueda en dos fases** para garantizar que nunca mezcle recuerdos de contextos diferentes:
+
+```
+Pregunta del usuario
+       │
+       ▼
+ Fase 1: Búsqueda vectorial
+ (top 5 candidatos por similitud semántica global)
+       │
+       ▼
+ Fase 2: Re-ranking por Topic Fingerprint
+ (compara las palabras CLAVE de la pregunta con las de cada candidato)
+       │
+       ▼
+ Candidato con mayor score combinado (50% texto + 50% tema)
+       │
+       ▼
+ Umbral mínimo 40% — si ningún recuerdo supera el umbral,
+ el motor responde "No tengo esa información" en lugar de inventar.
+```
+
+> **Ejemplo:** Si la IA guardó "El Cuento del Dragón" y "El Cuento del Pescador", y el usuario pregunta algo sobre el dragón, el motor distinguirá correctamente entre los dos aunque compartan palabras como "el", "fue", "había".
 
 ## Arquitectura
 
 ```
 recallclaw/
-├── memory.py        # API principal — memorize(), ask(), sleep_cycle()
+├── memory.py        # API principal — memorize(), ask(), sleep_cycle(), métodos de alto nivel
 ├── lac_engine.py    # Motor de Compresión Atómica (LAC)
-├── database.py      # Grafo relacional SQLite
+├── database.py      # Grafo relacional SQLite + Topic Fingerprints
 ├── validator.py     # Juez Semántico (sentence-transformers)
-├── llm_connector.py # Conector LLM local (Ollama)
+├── llm_connector.py # Conector LLM local (Ollama) — agnóstico de modelo
 ├── evolver.py       # Ciclos de consolidación y degradación progresiva
 ├── daemon.py        # Proceso autónomo de optimización en segundo plano
 └── sync_engine.py   # La Colmena — intercambio de vocabulario entre IAs
