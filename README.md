@@ -165,6 +165,12 @@ recallclaw/
 
 ## Changelog
 
+### v1.4.0 — Fragmentación Semántica y Recuperación Multicapa
+- **[NUEVO] Fragmentación Semántica (Chunking)**: Ahora los textos largos se dividen automáticamente en fragmentos de ~120 palabras. Esto evita la "dilución" del significado y permite una búsqueda mucho más precisa.
+- **[NUEVO] Recuperación Multi-Snippet**: El motor ya no depende de un solo fragmento. Ahora recupera los **3 mejores fragmentos** relacionados y los une para dar una respuesta completa, ideal para cuentos o documentos largos.
+- **[FIX] Prompt Analítico de Alta Precisión**: Se rediseñó el prompt del Bibliotecario para ser extremadamente estricto con números, fechas y datos técnicos, reduciendo las alucinaciones a casi cero.
+- **[FIX] Topic Re-ranking optimizado**: El sistema de puntuación combinada ahora da más peso al tema (60%) que a la similitud global, garantizando que el contexto sea el correcto.
+
 ### v1.3.0 — Búsqueda en Dos Fases y Anti-Confusión de Historias
 - **[NUEVO] Topic Fingerprint**: Cada recuerdo almacena un segundo vector calculado solo con sus palabras de contenido (sustantivos, verbos, nombres). Permite distinguir historias distintas aunque compartan vocabulario superficial.
 - **[NUEVO] Búsqueda en Dos Fases**: El Bibliotecario ahora recupera primero 5 candidatos (similitud global) y luego los re-rankea por Topic Fingerprint (similitud temática), eligiendo el más preciso.

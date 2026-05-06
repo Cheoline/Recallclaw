@@ -45,42 +45,46 @@ class PositronicBrain:
         elif auto_context and text.strip():
             text = f"[{self._detect_subject_tag(text)}] {text}"
 
-        print(f"[*] Inyectando recuerdo original: '{text}'")
+        print(f"[*] Inyectando recuerdo original: '{text[:50]}...'")
         
-        # 0. Generar Hash Semántico (Embedding Matemático del recuerdo completo)
-        semantic_hash_bytes = None
-        topic_fingerprint_bytes = None
-        if self.judge.model is not None:
-            # Hash semántico del texto completo (para la búsqueda principal)
-            tensor = self.judge.model.encode(text)
-            semantic_hash_bytes = tensor.tobytes()
-
-            # Topic fingerprint: embedding de las palabras de contenido (sustantivos, verbos)
-            # Filtramos stop words para capturar la esencia temática del recuerdo.
-            palabras_contenido = self._extract_content_words(text)
-            if palabras_contenido:
-                topic_tensor = self.judge.model.encode(palabras_contenido)
-                topic_fingerprint_bytes = topic_tensor.tobytes()
-            else:
-                # Si no hay palabras de contenido, usamos el hash general
-                topic_fingerprint_bytes = semantic_hash_bytes
+        # 1. Fragmentación Semántica (Chunking)
+        # Si el texto es muy largo, lo dividimos para no diluir el vector
+        fragmentos = self._chunk_text(text)
+        results = []
         
-        # 1. Compresión LAC (Semántica y Fonética)
-        tokens = self.lac.compress(text)
-        print(f"[*] Compresión Atómica (LAC): {' '.join(tokens)}")
-        
-        # 2. Guardar en Base de Datos con fingerprint de tema
-        memory_id = self.db.save_memory(
-            original_text=text,
-            tokens=tokens,
-            semantic_hash=semantic_hash_bytes,
-            topic_fingerprint=topic_fingerprint_bytes
-        )
+        for i, frag in enumerate(fragmentos):
+            if len(fragmentos) > 1:
+                print(f"[*] Procesando fragmento {i+1}/{len(fragmentos)}...")
+                
+            # 0. Generar Hash Semántico y Topic Fingerprint
+            semantic_hash_bytes = None
+            topic_fingerprint_bytes = None
+            if self.judge.model is not None:
+                tensor = self.judge.model.encode(frag)
+                semantic_hash_bytes = tensor.tobytes()
+                palabras_contenido = self._extract_content_words(frag)
+                if palabras_contenido:
+                    topic_tensor = self.judge.model.encode(palabras_contenido)
+                    topic_fingerprint_bytes = topic_tensor.tobytes()
+                else:
+                    topic_fingerprint_bytes = semantic_hash_bytes
+            
+            # 1. Compresión LAC
+            tokens = self.lac.compress(frag)
+            
+            # 2. Guardar en Base de Datos
+            memory_id = self.db.save_memory(
+                original_text=frag,
+                tokens=tokens,
+                semantic_hash=semantic_hash_bytes,
+                topic_fingerprint=topic_fingerprint_bytes
+            )
+            results.append(memory_id)
         
         return {
-            "memory_id": memory_id,
-            "compressed_tokens": tokens,
-            "compression_ratio": f"{100 - (len(' '.join(tokens)) / len(text) * 100):.1f}%" if len(text) > 0 else "0%"
+            "memory_ids": results,
+            "chunks_count": len(fragmentos),
+            "total_text_length": len(text)
         }
 
     # Lista de indicadores de primera persona (el usuario habla de sí mismo)
@@ -140,6 +144,36 @@ class PositronicBrain:
         words = text_clean.lower().split()
         content_words = [w for w in words if w not in self._STOP_WORDS and len(w) > 2]
         return " ".join(content_words) if content_words else text_clean
+
+    def _chunk_text(self, text: str, max_words: int = 120) -> list:
+        """
+        Divide un texto largo en fragmentos más pequeños basados en párrafos o puntos.
+        Esto asegura que cada fragmento mantenga una alta densidad semántica.
+        """
+        if len(text.split()) <= max_words:
+            return [text]
+            
+        chunks = []
+        # Intentamos dividir por párrafos primero
+        paragraphs = text.split('\n')
+        current_chunk = []
+        current_count = 0
+        
+        for p in paragraphs:
+            p = p.strip()
+            if not p: continue
+            words = p.split()
+            if current_count + len(words) > max_words and current_chunk:
+                chunks.append("\n".join(current_chunk))
+                current_chunk = []
+                current_count = 0
+            current_chunk.append(p)
+            current_count += len(words)
+            
+        if current_chunk:
+            chunks.append("\n".join(current_chunk))
+            
+        return chunks
 
     # ═══════════════════════════════════════════════════════════════════
     # MÉTODOS DE ALTO NIVEL — Integración directa con agentes de IA
@@ -296,119 +330,90 @@ class PositronicBrain:
             "original_text": original
         }
 
-    def _rerank_by_topic(self, question: str, candidatos: list) -> tuple:
-        """
-        Segunda fase de búsqueda: re-rankea los candidatos usando los Topic Fingerprints.
-        Combina la similitud semántica del texto completo (fase 1) con la similitud
-        temática de las palabras de contenido (fase 2) para elegir el recuerdo correcto.
-
-        Retorna (memory_id, combined_score) del recuerdo ganador.
-        """
-        if self.judge.model is None or len(candidatos) == 1:
-            # Sin modelo o un solo candidato: confiamos en la fase 1 directamente
-            return candidatos[0][1], candidatos[0][0]
-
-        import numpy as np
-        import torch
-        from sentence_transformers import util
-
-        # Calculamos el fingerprint temático de la pregunta
-        palabras_pregunta = self._extract_content_words(question)
-        if not palabras_pregunta:
-            palabras_pregunta = question
-        query_topic_tensor = self.judge.model.encode(palabras_pregunta, convert_to_tensor=True)
-
-        # Obtenemos los topic fingerprints de los candidatos de la base de datos
-        all_topic_fps = {mid: fp for mid, fp in self.db.get_all_topic_fingerprints()}
-
-        mejor_id = candidatos[0][1]
-        mejor_score = -1.0
-
-        for vec_score, memory_id in candidatos:
-            topic_fp = all_topic_fps.get(memory_id)
-            if topic_fp is None:
-                # Sin fingerprint temático, usamos solo el score vectorial
-                combined = vec_score
-            else:
-                mem_topic_tensor = torch.tensor(
-                    np.frombuffer(topic_fp, dtype=np.float32)
-                ).to(query_topic_tensor.device)
-                topic_sim = float(util.cos_sim(query_topic_tensor, mem_topic_tensor)[0][0])
-                # Score combinado: 50% similitud de texto + 50% similitud de tema
-                combined = (vec_score * 0.5) + (topic_sim * 0.5)
-                print(f"[*]   Candidato {memory_id}: vec={vec_score:.2f} topic={topic_sim:.2f} combined={combined:.2f}")
-
-            if combined > mejor_score:
-                mejor_score = combined
-                mejor_id = memory_id
-
-        return mejor_id, mejor_score
-
     def ask(self, question: str) -> str:
         """
         El Bibliotecario: Busca en la base de datos la respuesta a una pregunta
         y la responde en lenguaje natural fluido.
-        Usa un sistema de dos fases:
-        1. Búsqueda vectorial (similitud semántica del texto completo).
-        2. Re-ranking por Topic Fingerprint (similitud temática de palabras clave).
-        Esto evita que el motor confunda historias distintas que comparten vocabulario.
+        Usa un sistema multiclave: recupera los fragmentos más relevantes y los une
+        para que el LLM tenga todo el contexto necesario.
         """
         print(f"[*] El Bibliotecario está analizando la pregunta: '{question}'")
         
-        # 1. Obtener todos los hashes de la base de datos (Recuerdos)
         all_hashes = self.db.get_all_memory_hashes()
-        
         if not all_hashes:
             return self._ask_lexicon(question)
         
-        # 2. Fase 1: Búsqueda vectorial — top 5 candidatos por similitud de texto
-        candidatos = self.judge.search_best_memory(question, all_hashes, top_k=min(5, len(all_hashes)))
+        # 1. Obtener los mejores candidatos (top 8 para tener margen de maniobra)
+        candidatos = self.judge.search_best_memory(question, all_hashes, top_k=min(8, len(all_hashes)))
         if not candidatos:
             return self._ask_lexicon(question)
 
-        # 3. Fase 2: Re-ranking por Topic Fingerprint
-        # Calculamos el fingerprint de la pregunta y lo comparamos con el de cada candidato
-        # para elegir el recuerdo cuyo TEMA sea más afín, no solo su vocabulario superficial.
-        memory_id, score = self._rerank_by_topic(question, candidatos)
-
-        print(f"[*] Recuerdo elegido tras re-ranking: ID {memory_id} (Score combinado: {score:.2f})")
-
-        # Umbral mínimo de confianza: si el mejor recuerdo no es suficientemente relevante,
-        # es mejor admitir que no se sabe que mezclar hechos equivocados.
-        if score < 0.40:
-            print(f"[*] Similitud demasiado baja ({score:.2f}). Rechazando para evitar mezcla de recuerdos.")
+        # 2. Re-rankear y seleccionar los mejores fragmentos (Top 3)
+        # Esto permite responder preguntas que requieren unir datos de diferentes párrafos.
+        mejores_candidatos = self._get_top_relevant_snippets(question, candidatos, top_n=3)
+        
+        if not mejores_candidatos:
             return "No tengo un recuerdo lo suficientemente claro sobre eso."
+
+        # 3. Extraer y combinar los textos de los recuerdos elegidos
+        contexto_textos = []
+        for mid, score in mejores_candidatos:
+            mem = self.recall(mid)
+            txt = mem.get("original_text") or mem.get("reconstructed_lac", "")
+            if txt:
+                contexto_textos.append(txt)
         
-        # 3. Extraer la memoria (Puede ser el texto original o los tokens si ya fue consolidada)
-        memoria_recuperada = self.recall(memory_id)
-        if "error" in memoria_recuperada:
-            return "Hubo un error al extraer la memoria de los engramas."
+        texto_unificado = "\n---\n".join(contexto_textos)
+        print(f"[*] Contexto recuperado: {len(contexto_textos)} fragmentos (Confianza: {mejores_candidatos[0][1]:.2f})")
+
+        # 4. Formular el prompt para el LLM — Modo Analítico
+        prompt = f"""Actúa como un Sistema de Memoria de alta precisión.
+Tu misión es extraer datos EXACTOS de los recuerdos proporcionados para responder la pregunta.
+
+REGLAS DE ORO:
+1. Usa ÚNICAMENTE los recuerdos de abajo. Si el dato no está (ej. un año, un color, un nombre), di 'No tengo esa información'.
+2. SÉ PRECISO CON LOS NÚMEROS Y FECHAS. No los aproximes ni los inventes.
+3. No asumas que un lugar es una dirección cardinal a menos que el texto lo diga explícitamente.
+4. Si hay contradicciones o falta de información, admítelo. No intentes "completar" la historia.
+5. Responde en español de forma directa y clara.
+
+Recuerdos disponibles:
+{texto_unificado}
+
+Pregunta del usuario: {question}
+Respuesta basada en evidencia:"""
+
+        print("[*] Generando respuesta con LLM local...")
+        return self.llm.generate_response(prompt)
+
+    def _get_top_relevant_snippets(self, question: str, candidatos: list, top_n: int = 3) -> list:
+        """
+        Filtra y re-rankea candidatos, devolviendo hasta top_n fragmentos que superen el umbral.
+        """
+        all_topic_fps = {mid: fp for mid, fp in self.db.get_all_topic_fingerprints()}
+        
+        # Pre-calcular embedding de tema para la pregunta
+        palabras_pregunta = self._extract_content_words(question) or question
+        query_topic_tensor = self.judge.model.encode(palabras_pregunta, convert_to_tensor=True)
+
+        scored_results = []
+        for vec_score, mid in candidatos:
+            topic_fp = all_topic_fps.get(mid)
+            if topic_fp is None:
+                combined = vec_score
+            else:
+                import numpy as np
+                import torch
+                from sentence_transformers import util
+                mem_topic_tensor = torch.tensor(np.frombuffer(topic_fp, dtype=np.float32)).to(query_topic_tensor.device)
+                topic_sim = float(util.cos_sim(query_topic_tensor, mem_topic_tensor)[0][0])
+                combined = (vec_score * 0.4) + (topic_sim * 0.6)
             
-        texto_crudo = memoria_recuperada["original_text"]
-        if not texto_crudo:
-            texto_crudo = memoria_recuperada["reconstructed_lac"]
-            print(f"[*] El Bibliotecario está leyendo una memoria consolidada: {texto_crudo}")
+            if combined >= 0.35: # Umbral de relevancia
+                scored_results.append((mid, combined))
         
-        # 4. Formular el prompt para el LLM — Instrucciones estrictas de sujeto
-        prompt = f"""Eres un sistema de recuperación de memoria. Tu única función es responder la pregunta usando EXCLUSIVAMENTE el recuerdo proporcionado.
-
-REGLAS ESTRICTAS (no las rompas bajo ningún concepto):
-1. Responde SOLO con la información del recuerdo. Nada más.
-2. Presta atención al SUJETO del recuerdo. Si el recuerdo habla de una tercera persona (hermano, amigo, etc.), NO confundas sus datos con los del usuario.
-3. Si la pregunta es sobre "yo" o "me" y el recuerdo habla de otra persona, responde: 'No tengo ese dato del usuario en mis registros.'
-4. NO inventes, NO supongas, NO mezcles datos de distintas personas.
-5. Responde en español, de forma directa y breve.
-6. Si la información no está en el recuerdo, responde solo: 'No tengo esa información.'
-
-Recuerdo disponible: {texto_crudo}
-Pregunta: {question}
-Respuesta directa:"""
-
-        # 5. Generar respuesta fluida
-        print("[*] Reconstruyendo respuesta con LLM local...")
-        respuesta = self.llm.generate_response(prompt)
-        
-        return respuesta
+        scored_results.sort(key=lambda x: x[1], reverse=True)
+        return scored_results[:top_n]
 
     def _ask_lexicon(self, question: str) -> str:
         """
