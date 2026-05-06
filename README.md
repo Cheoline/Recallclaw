@@ -54,7 +54,7 @@ ollama pull llama3.2:1b
 ## Uso rápido
 
 ```python
-pip ricallclaw
+pip recallclaw
 
 from recallclaw import PositronicBrain
 
