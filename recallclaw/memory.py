@@ -49,8 +49,11 @@ class PositronicBrain:
         
         print(f"[*] Analizando ADN temático del texto completo...")
         
-        # 0. Extracción del "ADN Global" (Palabras clave del documento completo)
-        # Esto permite que cada fragmento herede el contexto general del cuento
+        # 0. Sello de Origen (Hash del documento completo)
+        import hashlib
+        source_hash = hashlib.sha256(text.encode()).hexdigest()
+        
+        # 0.5. ADN Global
         adn_global = self._extract_content_words(text, top_n=10)
         
         # 1. Fragmentación Semántica (Chunking)
@@ -65,12 +68,9 @@ class PositronicBrain:
             semantic_hash_bytes = None
             topic_fingerprint_bytes = None
             if self.judge.model is not None:
-                # El vector principal sigue siendo el fragmento local
                 tensor = self.judge.model.encode(frag)
                 semantic_hash_bytes = tensor.tobytes()
                 
-                # El Topic Fingerprint ahora combina el ADN GLOBAL + CONTENIDO LOCAL
-                # Esto crea el vínculo "quién va con quién" que pidió el usuario
                 palabras_locales = self._extract_content_words(frag, top_n=None)
                 combo_tematico = f"{adn_global} {palabras_locales}"
                 
@@ -80,12 +80,13 @@ class PositronicBrain:
             # 3. Compresión LAC
             tokens = self.lac.compress(frag)
             
-            # 4. Guardar en Base de Datos
+            # 4. Guardar en Base de Datos con su Sello de Origen
             memory_id = self.db.save_memory(
                 original_text=frag,
                 tokens=tokens,
                 semantic_hash=semantic_hash_bytes,
-                topic_fingerprint=topic_fingerprint_bytes
+                topic_fingerprint=topic_fingerprint_bytes,
+                source_hash=source_hash
             )
             results.append(memory_id)
         
@@ -351,10 +352,9 @@ class PositronicBrain:
 
     def ask(self, question: str) -> str:
         """
-        El Bibliotecario: Busca en la base de datos la respuesta a una pregunta
-        y la responde en lenguaje natural fluido.
-        Usa un sistema multiclave: recupera los fragmentos más relevantes y los une
-        para que el LLM tenga todo el contexto necesario.
+        El Bibliotecario: Busca en la base de datos la respuesta a una pregunta.
+        Usa Reconstrucción de Documentos: si encuentra un fragmento relevante,
+        recupera la historia completa a la que pertenece para no perder el contexto.
         """
         print(f"[*] El Bibliotecario está analizando la pregunta: '{question}'")
         
@@ -362,47 +362,46 @@ class PositronicBrain:
         if not all_hashes:
             return self._ask_lexicon(question)
         
-        # 1. Obtener los mejores candidatos (top 8 para tener margen de maniobra)
-        candidatos = self.judge.search_best_memory(question, all_hashes, top_k=min(8, len(all_hashes)))
+        # 1. Buscar el fragmento más relevante (Top 1)
+        candidatos = self.judge.search_best_memory(question, all_hashes, top_k=min(5, len(all_hashes)))
         if not candidatos:
             return self._ask_lexicon(question)
 
-        # 2. Re-rankear y seleccionar los mejores fragmentos (Top 3)
-        # Esto permite responder preguntas que requieren unir datos de diferentes párrafos.
-        mejores_candidatos = self._get_top_relevant_snippets(question, candidatos, top_n=3)
-        
-        if not mejores_candidatos:
+        # 2. Re-rankear para encontrar el fragmento ganador
+        mejores = self._get_top_relevant_snippets(question, candidatos, top_n=1)
+        if not mejores:
             return "No tengo un recuerdo lo suficientemente claro sobre eso."
 
-        # 3. Extraer y combinar los textos de los recuerdos elegidos
-        contexto_textos = []
-        for mid, score in mejores_candidatos:
-            mem = self.recall(mid)
-            txt = mem.get("original_text") or mem.get("reconstructed_lac", "")
-            if txt:
-                contexto_textos.append(txt)
+        win_mid, win_score = mejores[0]
         
-        texto_unificado = "\n---\n".join(contexto_textos)
-        print(f"[*] Contexto recuperado: {len(contexto_textos)} fragmentos (Confianza: {mejores_candidatos[0][1]:.2f})")
+        # 3. RECONSTRUCCIÓN: Obtener el sello de origen y traer el documento completo
+        sello = self.db.get_memory_source_hash(win_mid)
+        if sello:
+            print(f"[*] Fragmento ganador pertenece al documento {sello[:8]}...")
+            fragmentos_documento = self.db.get_memories_by_source(sello)
+            contexto_unificado = "\n".join([f[1] for f in fragmentos_documento])
+            print(f"[*] Historia reconstruida: {len(fragmentos_documento)} fragmentos cargados.")
+        else:
+            # Fallback si el recuerdo es huérfano (versiones antiguas)
+            mem = self.recall(win_mid)
+            contexto_unificado = mem.get("original_text") or mem.get("reconstructed_lac", "")
 
-        # 4. Formular el prompt para el LLM — Modo Analítico
+        # 4. Prompt para el LLM
         prompt = f"""Actúa como un Sistema de Memoria de alta precisión.
-Tu misión es extraer datos EXACTOS de los recuerdos proporcionados para responder la pregunta.
+Tu misión es responder basándote ÚNICAMENTE en el texto proporcionado abajo.
 
-REGLAS DE ORO:
-1. Usa ÚNICAMENTE los recuerdos de abajo. Si el dato no está (ej. un año, un color, un nombre), di 'No tengo esa información'.
-2. SÉ PRECISO CON LOS NÚMEROS Y FECHAS. No los aproximes ni los inventes.
-3. No asumas que un lugar es una dirección cardinal a menos que el texto lo diga explícitamente.
-4. Si hay contradicciones o falta de información, admítelo. No intentes "completar" la historia.
-5. Responde en español de forma directa y clara.
+REGLAS:
+1. Responde con datos exactos (años, nombres, materiales).
+2. Si la pregunta requiere datos que no están en el texto, di 'No tengo esa información'.
+3. NO inventes nada que no esté escrito explícitamente.
 
-Recuerdos disponibles:
-{texto_unificado}
+Texto de referencia:
+{contexto_unificado}
 
-Pregunta del usuario: {question}
-Respuesta basada en evidencia:"""
+Pregunta: {question}
+Respuesta:"""
 
-        print("[*] Generando respuesta con LLM local...")
+        print("[*] Generando respuesta con contexto íntegro...")
         return self.llm.generate_response(prompt)
 
     def _get_top_relevant_snippets(self, question: str, candidatos: list, top_n: int = 3) -> list:

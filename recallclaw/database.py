@@ -37,16 +37,21 @@ class RecallClawDB:
                     original_text TEXT,
                     semantic_hash BLOB,
                     topic_fingerprint BLOB,
+                    source_hash TEXT,
                     compression_level INTEGER DEFAULT 0,
                     creation_date DATETIME,
                     last_recalled DATETIME
                 )
             ''')
-            # Migración para bases de datos ya existentes que no tienen la columna
+            # Migración para bases de datos ya existentes
+            try:
+                cursor.execute('ALTER TABLE Memories ADD COLUMN source_hash TEXT')
+            except Exception:
+                pass
             try:
                 cursor.execute('ALTER TABLE Memories ADD COLUMN topic_fingerprint BLOB')
             except Exception:
-                pass  # La columna ya existe
+                pass
 
             # Memory_Sequence: La red de uniones (Edges)
             cursor.execute('''
@@ -89,24 +94,20 @@ class RecallClawDB:
             cursor.execute('INSERT INTO Lexicon (token, usage_count, is_sealed) VALUES (?, 1, 0)', (token,))
             return cursor.lastrowid
 
-    def save_memory(self, original_text: str, tokens: List[str], semantic_hash: bytes = None, topic_fingerprint: bytes = None) -> int:
+    def save_memory(self, original_text: str, tokens: List[str], semantic_hash: bytes = None, topic_fingerprint: bytes = None, source_hash: str = None) -> int:
         """
         Guarda un nuevo recuerdo y sus enlaces al Lexicon.
-        El topic_fingerprint es un vector que identifica el TEMA principal del recuerdo,
-        independiente de las palabras compartidas con otros recuerdos.
-        NOTA: Ya no propagamos el hash del recuerdo a los tokens del Lexicon —
-        eso causaba que palabras compartidas entre historias distintas arrastraran
-        el contexto semántico incorrecto al buscador.
+        El source_hash permite reconstruir documentos completos (unir todos los fragmentos).
         """
         with self._get_conn() as conn:
             cursor = conn.cursor()
             now = datetime.datetime.now().isoformat()
             
-            # Insertar en Memories con su fingerprint de tema
+            # Insertar en Memories con su sello de origen
             cursor.execute('''
-                INSERT INTO Memories (original_text, semantic_hash, topic_fingerprint, creation_date, last_recalled)
-                VALUES (?, ?, ?, ?, ?)
-            ''', (original_text, semantic_hash, topic_fingerprint, now, now))
+                INSERT INTO Memories (original_text, semantic_hash, topic_fingerprint, source_hash, creation_date, last_recalled)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ''', (original_text, semantic_hash, topic_fingerprint, source_hash, now, now))
             memory_id = cursor.lastrowid
 
             # Enlazar tokens al grafo (solo posición, sin contaminar el hash del Lexicon)
@@ -134,6 +135,21 @@ class RecallClawDB:
             cursor.execute('SELECT id, topic_fingerprint FROM Memories WHERE topic_fingerprint IS NOT NULL')
             return cursor.fetchall()
 
+
+    def get_memories_by_source(self, source_hash: str) -> List[Tuple[int, str]]:
+        """Recupera todos los fragmentos que pertenecen al mismo documento original."""
+        with self._get_conn() as conn:
+            cursor = conn.cursor()
+            cursor.execute('SELECT id, original_text FROM Memories WHERE source_hash = ? ORDER BY id ASC', (source_hash,))
+            return cursor.fetchall()
+
+    def get_memory_source_hash(self, memory_id: int) -> str:
+        """Obtiene el sello de origen de un fragmento específico."""
+        with self._get_conn() as conn:
+            cursor = conn.cursor()
+            cursor.execute('SELECT source_hash FROM Memories WHERE id = ?', (memory_id,))
+            res = cursor.fetchone()
+            return res[0] if res else None
 
     def get_memory(self, memory_id: int) -> Tuple[str, List[str]]:
         """

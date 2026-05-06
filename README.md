@@ -165,6 +165,11 @@ recallclaw/
 
 ## Changelog
 
+### v1.7.0 — Reconstrucción de Documentos (Source-based Recovery)
+- **[NUEVO] Sello de Origen (Source Hash)**: Cada vez que se memoriza un texto, se le asigna un sello único a todos sus fragmentos. Esto permite que el motor sepa exactamente qué trozos de memoria pertenecen al mismo documento original.
+- **[NUEVO] Reconstrucción Íntegra**: Al buscar, si el motor encuentra un fragmento relevante, recupera AUTOMÁTICAMENTE toda la historia a la que pertenece. Esto garantiza que el LLM tenga el contexto completo (párrafos iniciales, medios y finales) y no alucine datos faltantes.
+- **[FIX] Prevención de Fragmentación**: Se acabó el problema de perder el año o los grados porque estaban en otro párrafo. Si el motor encuentra la "nota final", ahora también "lee" el párrafo del principio.
+
 ### v1.6.0 — Herencia de ADN Temático (Global DNA)
 - **[NUEVO] Inyección de ADN Global**: Antes de fragmentar un cuento, el motor extrae los 10 términos más importantes del documento completo. Estos términos se inyectan en el `Topic Fingerprint` de cada fragmento, garantizando que todos los trozos "sepan" a qué historia pertenecen.
 - **[NUEVO] Extractor de Palabras Clave Avanzado**: Se implementó un contador de frecuencia semántica para identificar los conceptos reales de una historia y descartar el ruido.
