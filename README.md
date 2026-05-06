@@ -163,6 +163,38 @@ recallclaw/
 └── sync_engine.py   # La Colmena — intercambio de vocabulario entre IAs
 ```
 
+## Changelog
+
+### v1.3.0 — Búsqueda en Dos Fases y Anti-Confusión de Historias
+- **[NUEVO] Topic Fingerprint**: Cada recuerdo almacena un segundo vector calculado solo con sus palabras de contenido (sustantivos, verbos, nombres). Permite distinguir historias distintas aunque compartan vocabulario superficial.
+- **[NUEVO] Búsqueda en Dos Fases**: El Bibliotecario ahora recupera primero 5 candidatos (similitud global) y luego los re-rankea por Topic Fingerprint (similitud temática), eligiendo el más preciso.
+- **[FIX] Eliminada contaminación del Lexicon**: `save_memory` ya no propaga el hash semántico del recuerdo a los tokens del Lexicon. Esto evitaba que palabras compartidas entre historias distintas "arrastraran" el contexto equivocado al buscador.
+- **[FIX] Umbral mínimo de confianza (40%)**: Si ningún recuerdo supera el umbral de similitud, el motor responde honestamente en lugar de devolver un resultado incorrecto.
+- **[FIX] Etiquetado de sujeto inteligente**: El auto-contexto ya no toma las primeras 5 palabras ciegamente; detecta si el texto habla del usuario (`[SUJETO:YO]`) o de otra persona (`[SUJETO:TERCERO]`), evitando confusión de identidades.
+- **[FIX] Prompt del Bibliotecario más estricto**: Las instrucciones al LLM ahora le exigen explícitamente no confundir sujetos entre recuerdos diferentes.
+
+### v1.2.0 — API de Alto Nivel para Integración Directa con IAs
+- **[NUEVO] `memorize_user_input(msg)`**: Guarda solo el input del usuario, filtrando emojis, mensajes triviales y respuestas de IA automáticamente.
+- **[NUEVO] `memorize_conversation(user_input, ai_response)`**: Acepta el turno completo de conversación pero descarta la respuesta de la IA. Solo persiste los hechos del usuario.
+- **[NUEVO] `get_context_for(question)`**: Busca en la memoria vectorial y entrega un `system_prompt` formateado y listo para inyectar directamente en cualquier LLM.
+- **[NUEVO] Filtro de mensajes triviales**: El motor descarta automáticamente saludos, confirmaciones y mensajes sin contenido semántico real.
+
+### v1.1.0 — Compatibilidad Universal y Robustez del Motor
+- **[FIX] NameError en `daemon.py`**: Eliminado el type-hint de `PositronicBrain` en el constructor del `SubconsciousDaemon` que causaba un error de importación circular al arrancar el motor.
+- **[NUEVO] Parámetro `llm_model` en `PositronicBrain`**: Ahora cualquier desarrollador puede especificar su modelo de Ollama al instanciar el cerebro (`PositronicBrain(llm_model="llama3")`). Ya no es necesario reescribir propiedades internas.
+- **[NUEVO] Sanitización nativa de emojis**: `memorize()` limpia automáticamente los emojis del texto antes de comprimirlo, evitando ruido en los tensores vectoriales y el motor LAC.
+- **[FIX] Modelo por defecto actualizado**: Cambiado de `llama3.2:1b` a `gemma3:4b` en `llm_connector.py`.
+- **[NUEVO] Dependencia `emoji>=2.0.0`** añadida a `install_requires`.
+
+### v1.0.0 — Lanzamiento Inicial
+- Motor de Compresión Atómica (LAC) con análisis morfológico NLP (spaCy).
+- Almacenamiento relacional en grafo SQLite con deduplicación de palabras.
+- Búsqueda vectorial (RAG) con `sentence-transformers`.
+- Juez Semántico para validación de compresiones.
+- Evolucionador con ciclos de sueño y consolidación de memoria.
+- Daemon de optimización en segundo plano.
+- La Colmena: intercambio criptográfico de vocabulario entre instancias.
+
 ## Licencia
 
 MIT

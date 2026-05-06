@@ -5,8 +5,8 @@ with open("README.md", "r", encoding="utf-8") as f:
 
 setup(
     name="recallclaw",
-    version="1.0.0",
-    description="Sistema de memoria semántica a largo plazo para agentes de inteligencia artificial",
+    version="1.3.0",
+    description="Motor de memoria semántica persistente para agentes de IA. Comprime, indexa y recupera recuerdos con búsqueda vectorial en dos fases y prevención de interferencia semántica.",
     long_description=long_description,
     long_description_content_type="text/markdown",
     author="Cheoline",
@@ -29,5 +29,5 @@ setup(
         "Intended Audience :: Developers",
         "Topic :: Scientific/Engineering :: Artificial Intelligence",
     ],
-    keywords="ai memory rag vector semantic compression nlp",
+    keywords="ai memory rag vector semantic compression nlp llm ollama persistent-memory topic-fingerprint",
 )
