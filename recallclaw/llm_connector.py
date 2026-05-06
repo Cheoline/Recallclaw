@@ -6,7 +6,7 @@ class LLMConnector:
     Conector simple para interactuar con un LLM local (ej. Ollama).
     Usado por "El Bibliotecario" para reconstruir memorias y responder preguntas.
     """
-    def __init__(self, host: str = "http://localhost:11434", default_model: str = "llama3.2:1b"):
+    def __init__(self, host: str = "http://localhost:11434", default_model: str = "gemma3:4b"):
         self.host = host
         self.default_model = default_model
         

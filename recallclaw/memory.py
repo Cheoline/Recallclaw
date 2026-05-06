@@ -29,10 +29,20 @@ class PositronicBrain:
         """Dispara el proceso de mantenimiento de la memoria (El Evolucionador)."""
         self.evolver.sleep_cycle()
 
-    def memorize(self, text: str) -> dict:
+    def memorize(self, text: str, context: str = None, auto_context: bool = True) -> dict:
         """
         Procesa un texto en español, lo comprime a formato LAC, y lo guarda en el grafo relacional.
+        Se puede proveer un `context` explícito, o dejar que el motor infiera uno (auto_context)
+        para evitar interferencias semánticas tras los ciclos de sueño.
         """
+        # Solución a Interferencia Semántica: Marcador de contexto automático
+        if context:
+            text = f"[CONTEXTO: {context}] {text}"
+        elif auto_context and text.strip():
+            palabras = text.split()
+            contexto_breve = " ".join(palabras[:5])
+            text = f"[CONTEXTO: {contexto_breve}] {text}"
+
         print(f"[*] Inyectando recuerdo original: '{text}'")
         
         # 0. Generar Hash Semántico (Embedding Matemático)

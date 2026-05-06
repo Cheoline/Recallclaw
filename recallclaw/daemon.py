@@ -7,7 +7,7 @@ class SubconsciousDaemon:
     El 'Subconsciente' de la IA.
     Corre en segundo plano y activa el ciclo de sueño del Evolucionador automáticamente.
     """
-    def __init__(self, brain: PositronicBrain, check_interval_hours: float = 24.0):
+    def __init__(self, brain, check_interval_hours: float = 24.0):
         self.brain = brain
         self.check_interval_seconds = check_interval_hours * 3600
         self.running = False
