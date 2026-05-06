@@ -36,11 +36,17 @@ class RecallClawDB:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     original_text TEXT,
                     semantic_hash BLOB,
+                    topic_fingerprint BLOB,
                     compression_level INTEGER DEFAULT 0,
                     creation_date DATETIME,
                     last_recalled DATETIME
                 )
             ''')
+            # Migración para bases de datos ya existentes que no tienen la columna
+            try:
+                cursor.execute('ALTER TABLE Memories ADD COLUMN topic_fingerprint BLOB')
+            except Exception:
+                pass  # La columna ya existe
 
             # Memory_Sequence: La red de uniones (Edges)
             cursor.execute('''
@@ -83,29 +89,29 @@ class RecallClawDB:
             cursor.execute('INSERT INTO Lexicon (token, usage_count, is_sealed) VALUES (?, 1, 0)', (token,))
             return cursor.lastrowid
 
-    def save_memory(self, original_text: str, tokens: List[str], semantic_hash: bytes = None) -> int:
+    def save_memory(self, original_text: str, tokens: List[str], semantic_hash: bytes = None, topic_fingerprint: bytes = None) -> int:
         """
         Guarda un nuevo recuerdo y sus enlaces al Lexicon.
-        También intenta asignar un hash semántico a los tokens nuevos si no lo tienen.
+        El topic_fingerprint es un vector que identifica el TEMA principal del recuerdo,
+        independiente de las palabras compartidas con otros recuerdos.
+        NOTA: Ya no propagamos el hash del recuerdo a los tokens del Lexicon —
+        eso causaba que palabras compartidas entre historias distintas arrastraran
+        el contexto semántico incorrecto al buscador.
         """
         with self._get_conn() as conn:
             cursor = conn.cursor()
             now = datetime.datetime.now().isoformat()
             
-            # Insertar en Memories
+            # Insertar en Memories con su fingerprint de tema
             cursor.execute('''
-                INSERT INTO Memories (original_text, semantic_hash, creation_date, last_recalled)
-                VALUES (?, ?, ?, ?)
-            ''', (original_text, semantic_hash, now, now))
+                INSERT INTO Memories (original_text, semantic_hash, topic_fingerprint, creation_date, last_recalled)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (original_text, semantic_hash, topic_fingerprint, now, now))
             memory_id = cursor.lastrowid
 
-            # Enlazar tokens y asignarles el hash del contexto si son nuevos
+            # Enlazar tokens al grafo (solo posición, sin contaminar el hash del Lexicon)
             for position, token in enumerate(tokens):
                 token_id = self.get_or_create_token_id(cursor, token)
-                # Si el token es local y no tiene hash, le damos el hash de este recuerdo como referencia
-                if semantic_hash:
-                    cursor.execute("UPDATE Lexicon SET semantic_hash = ? WHERE id = ? AND semantic_hash IS NULL", (semantic_hash, token_id))
-                
                 cursor.execute('''
                     INSERT INTO Memory_Sequence (memory_id, lexicon_id, position)
                     VALUES (?, ?, ?)
@@ -113,12 +119,21 @@ class RecallClawDB:
             
             return memory_id
 
+
     def get_all_memory_hashes(self) -> List[Tuple[int, bytes]]:
         """Devuelve todos los hashes semánticos para búsqueda vectorial."""
         with self._get_conn() as conn:
             cursor = conn.cursor()
             cursor.execute('SELECT id, semantic_hash FROM Memories WHERE semantic_hash IS NOT NULL')
             return cursor.fetchall()
+
+    def get_all_topic_fingerprints(self) -> List[Tuple[int, bytes]]:
+        """Devuelve los topic fingerprints para la validación de tema."""
+        with self._get_conn() as conn:
+            cursor = conn.cursor()
+            cursor.execute('SELECT id, topic_fingerprint FROM Memories WHERE topic_fingerprint IS NOT NULL')
+            return cursor.fetchall()
+
 
     def get_memory(self, memory_id: int) -> Tuple[str, List[str]]:
         """

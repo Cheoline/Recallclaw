@@ -47,18 +47,35 @@ class PositronicBrain:
 
         print(f"[*] Inyectando recuerdo original: '{text}'")
         
-        # 0. Generar Hash Semántico (Embedding Matemático)
+        # 0. Generar Hash Semántico (Embedding Matemático del recuerdo completo)
         semantic_hash_bytes = None
+        topic_fingerprint_bytes = None
         if self.judge.model is not None:
+            # Hash semántico del texto completo (para la búsqueda principal)
             tensor = self.judge.model.encode(text)
             semantic_hash_bytes = tensor.tobytes()
+
+            # Topic fingerprint: embedding de las palabras de contenido (sustantivos, verbos)
+            # Filtramos stop words para capturar la esencia temática del recuerdo.
+            palabras_contenido = self._extract_content_words(text)
+            if palabras_contenido:
+                topic_tensor = self.judge.model.encode(palabras_contenido)
+                topic_fingerprint_bytes = topic_tensor.tobytes()
+            else:
+                # Si no hay palabras de contenido, usamos el hash general
+                topic_fingerprint_bytes = semantic_hash_bytes
         
         # 1. Compresión LAC (Semántica y Fonética)
         tokens = self.lac.compress(text)
         print(f"[*] Compresión Atómica (LAC): {' '.join(tokens)}")
         
-        # 2. Guardar en Base de Datos (Deduplicación de Nodos)
-        memory_id = self.db.save_memory(original_text=text, tokens=tokens, semantic_hash=semantic_hash_bytes)
+        # 2. Guardar en Base de Datos con fingerprint de tema
+        memory_id = self.db.save_memory(
+            original_text=text,
+            tokens=tokens,
+            semantic_hash=semantic_hash_bytes,
+            topic_fingerprint=topic_fingerprint_bytes
+        )
         
         return {
             "memory_id": memory_id,
@@ -93,14 +110,36 @@ class PositronicBrain:
         if is_first_person and not is_third_person:
             return "SUJETO:YO"
         elif is_third_person and not is_first_person:
-            # Intentamos capturar el nombre del tercero de la frase
             return "SUJETO:TERCERO"
         elif is_first_person and is_third_person:
             return "SUJETO:YO+TERCERO"
         else:
-            # Fallback genérico con las primeras 4 palabras
             palabras = text.split()
             return f"CONTEXTO:{' '.join(palabras[:4])}"
+
+    # Stop words comunes en español e inglés para el extractor de palabras de contenido
+    _STOP_WORDS = {
+        "el", "la", "los", "las", "un", "una", "unos", "unas", "de", "del",
+        "en", "y", "o", "a", "que", "se", "es", "su", "sus", "con", "por",
+        "para", "como", "pero", "mas", "si", "me", "le", "les", "lo", "al",
+        "hay", "era", "fue", "son", "han", "the", "a", "an", "is", "are",
+        "was", "were", "of", "in", "and", "or", "to", "it", "he", "she",
+        "contexto", "sujeto"
+    }
+
+    def _extract_content_words(self, text: str) -> str:
+        """
+        Extrae solo las palabras de contenido semántico real (sustantivos, nombres,
+        verbos principales) ignorando stop words y las etiquetas de contexto internas.
+        El resultado se usa para calcular el Topic Fingerprint del recuerdo, que
+        permite distinguir historias aunque compartan vocabulario superficial.
+        """
+        import re
+        # Eliminar etiquetas internas como [SUJETO:YO] o [CONTEXTO:...]
+        text_clean = re.sub(r'\[.*?\]', '', text).strip()
+        words = text_clean.lower().split()
+        content_words = [w for w in words if w not in self._STOP_WORDS and len(w) > 2]
+        return " ".join(content_words) if content_words else text_clean
 
     # ═══════════════════════════════════════════════════════════════════
     # MÉTODOS DE ALTO NIVEL — Integración directa con agentes de IA
@@ -257,27 +296,82 @@ class PositronicBrain:
             "original_text": original
         }
 
+    def _rerank_by_topic(self, question: str, candidatos: list) -> tuple:
+        """
+        Segunda fase de búsqueda: re-rankea los candidatos usando los Topic Fingerprints.
+        Combina la similitud semántica del texto completo (fase 1) con la similitud
+        temática de las palabras de contenido (fase 2) para elegir el recuerdo correcto.
+
+        Retorna (memory_id, combined_score) del recuerdo ganador.
+        """
+        if self.judge.model is None or len(candidatos) == 1:
+            # Sin modelo o un solo candidato: confiamos en la fase 1 directamente
+            return candidatos[0][1], candidatos[0][0]
+
+        import numpy as np
+        import torch
+        from sentence_transformers import util
+
+        # Calculamos el fingerprint temático de la pregunta
+        palabras_pregunta = self._extract_content_words(question)
+        if not palabras_pregunta:
+            palabras_pregunta = question
+        query_topic_tensor = self.judge.model.encode(palabras_pregunta, convert_to_tensor=True)
+
+        # Obtenemos los topic fingerprints de los candidatos de la base de datos
+        all_topic_fps = {mid: fp for mid, fp in self.db.get_all_topic_fingerprints()}
+
+        mejor_id = candidatos[0][1]
+        mejor_score = -1.0
+
+        for vec_score, memory_id in candidatos:
+            topic_fp = all_topic_fps.get(memory_id)
+            if topic_fp is None:
+                # Sin fingerprint temático, usamos solo el score vectorial
+                combined = vec_score
+            else:
+                mem_topic_tensor = torch.tensor(
+                    np.frombuffer(topic_fp, dtype=np.float32)
+                ).to(query_topic_tensor.device)
+                topic_sim = float(util.cos_sim(query_topic_tensor, mem_topic_tensor)[0][0])
+                # Score combinado: 50% similitud de texto + 50% similitud de tema
+                combined = (vec_score * 0.5) + (topic_sim * 0.5)
+                print(f"[*]   Candidato {memory_id}: vec={vec_score:.2f} topic={topic_sim:.2f} combined={combined:.2f}")
+
+            if combined > mejor_score:
+                mejor_score = combined
+                mejor_id = memory_id
+
+        return mejor_id, mejor_score
+
     def ask(self, question: str) -> str:
         """
-        El Bibliotecario: Busca en la base de datos la respuesta a una pregunta y la responde en lenguaje natural fluido.
+        El Bibliotecario: Busca en la base de datos la respuesta a una pregunta
+        y la responde en lenguaje natural fluido.
+        Usa un sistema de dos fases:
+        1. Búsqueda vectorial (similitud semántica del texto completo).
+        2. Re-ranking por Topic Fingerprint (similitud temática de palabras clave).
+        Esto evita que el motor confunda historias distintas que comparten vocabulario.
         """
         print(f"[*] El Bibliotecario está analizando la pregunta: '{question}'")
         
         # 1. Obtener todos los hashes de la base de datos (Recuerdos)
         all_hashes = self.db.get_all_memory_hashes()
         
-        # Si no hay recuerdos, el Bibliotecario consulta el LEXICON como diccionario
         if not all_hashes:
             return self._ask_lexicon(question)
-            
-        # 2. Buscar la memoria más relevante (RAG Vectorial)
-        best_matches = self.judge.search_best_memory(question, all_hashes, top_k=1)
-        if not best_matches:
-            # También fallback al Lexicon si no hay coincidencias
+        
+        # 2. Fase 1: Búsqueda vectorial — top 5 candidatos por similitud de texto
+        candidatos = self.judge.search_best_memory(question, all_hashes, top_k=min(5, len(all_hashes)))
+        if not candidatos:
             return self._ask_lexicon(question)
-            
-        score, memory_id = best_matches[0]
-        print(f"[*] Recuerdo más relevante encontrado: ID {memory_id} (Similitud: {score:.2f})")
+
+        # 3. Fase 2: Re-ranking por Topic Fingerprint
+        # Calculamos el fingerprint de la pregunta y lo comparamos con el de cada candidato
+        # para elegir el recuerdo cuyo TEMA sea más afín, no solo su vocabulario superficial.
+        memory_id, score = self._rerank_by_topic(question, candidatos)
+
+        print(f"[*] Recuerdo elegido tras re-ranking: ID {memory_id} (Score combinado: {score:.2f})")
 
         # Umbral mínimo de confianza: si el mejor recuerdo no es suficientemente relevante,
         # es mejor admitir que no se sabe que mezclar hechos equivocados.
