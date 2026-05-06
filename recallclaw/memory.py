@@ -47,8 +47,13 @@ class PositronicBrain:
 
         print(f"[*] Inyectando recuerdo original: '{text[:50]}...'")
         
+        print(f"[*] Analizando ADN temático del texto completo...")
+        
+        # 0. Extracción del "ADN Global" (Palabras clave del documento completo)
+        # Esto permite que cada fragmento herede el contexto general del cuento
+        adn_global = self._extract_content_words(text, top_n=10)
+        
         # 1. Fragmentación Semántica (Chunking)
-        # Si el texto es muy largo, lo dividimos para no diluir el vector
         fragmentos = self._chunk_text(text)
         results = []
         
@@ -56,23 +61,26 @@ class PositronicBrain:
             if len(fragmentos) > 1:
                 print(f"[*] Procesando fragmento {i+1}/{len(fragmentos)}...")
                 
-            # 0. Generar Hash Semántico y Topic Fingerprint
+            # 2. Generar Hash Semántico y Topic Fingerprint
             semantic_hash_bytes = None
             topic_fingerprint_bytes = None
             if self.judge.model is not None:
+                # El vector principal sigue siendo el fragmento local
                 tensor = self.judge.model.encode(frag)
                 semantic_hash_bytes = tensor.tobytes()
-                palabras_contenido = self._extract_content_words(frag)
-                if palabras_contenido:
-                    topic_tensor = self.judge.model.encode(palabras_contenido)
-                    topic_fingerprint_bytes = topic_tensor.tobytes()
-                else:
-                    topic_fingerprint_bytes = semantic_hash_bytes
+                
+                # El Topic Fingerprint ahora combina el ADN GLOBAL + CONTENIDO LOCAL
+                # Esto crea el vínculo "quién va con quién" que pidió el usuario
+                palabras_locales = self._extract_content_words(frag, top_n=None)
+                combo_tematico = f"{adn_global} {palabras_locales}"
+                
+                topic_tensor = self.judge.model.encode(combo_tematico)
+                topic_fingerprint_bytes = topic_tensor.tobytes()
             
-            # 1. Compresión LAC
+            # 3. Compresión LAC
             tokens = self.lac.compress(frag)
             
-            # 2. Guardar en Base de Datos
+            # 4. Guardar en Base de Datos
             memory_id = self.db.save_memory(
                 original_text=frag,
                 tokens=tokens,
@@ -131,19 +139,30 @@ class PositronicBrain:
         "contexto", "sujeto"
     }
 
-    def _extract_content_words(self, text: str) -> str:
+    def _extract_content_words(self, text: str, top_n: int = 15) -> str:
         """
-        Extrae solo las palabras de contenido semántico real (sustantivos, nombres,
-        verbos principales) ignorando stop words y las etiquetas de contexto internas.
-        El resultado se usa para calcular el Topic Fingerprint del recuerdo, que
-        permite distinguir historias aunque compartan vocabulario superficial.
+        Extrae las palabras con mayor carga semántica (sustantivos, nombres propios, verbos).
+        Si top_n está presente, devuelve solo las N palabras más frecuentes.
         """
         import re
-        # Eliminar etiquetas internas como [SUJETO:YO] o [CONTEXTO:...]
+        from collections import Counter
+        
+        # Limpieza básica
         text_clean = re.sub(r'\[.*?\]', '', text).strip()
-        words = text_clean.lower().split()
-        content_words = [w for w in words if w not in self._STOP_WORDS and len(w) > 2]
-        return " ".join(content_words) if content_words else text_clean
+        words = re.findall(r'\b\w{3,}\b', text_clean.lower()) # Solo palabras de >2 letras
+        
+        # Filtrar stop words
+        content_words = [w for w in words if w not in self._STOP_WORDS]
+        
+        if not content_words:
+            return text_clean[:100]
+
+        # Si queremos un resumen de palabras clave (para el ADN global)
+        if top_n:
+            counts = Counter(content_words)
+            return " ".join([w for w, c in counts.most_common(top_n)])
+            
+        return " ".join(content_words)
 
     def _chunk_text(self, text: str, max_words: int = 120) -> list:
         """

@@ -165,6 +165,11 @@ recallclaw/
 
 ## Changelog
 
+### v1.6.0 — Herencia de ADN Temático (Global DNA)
+- **[NUEVO] Inyección de ADN Global**: Antes de fragmentar un cuento, el motor extrae los 10 términos más importantes del documento completo. Estos términos se inyectan en el `Topic Fingerprint` de cada fragmento, garantizando que todos los trozos "sepan" a qué historia pertenecen.
+- **[NUEVO] Extractor de Palabras Clave Avanzado**: Se implementó un contador de frecuencia semántica para identificar los conceptos reales de una historia y descartar el ruido.
+- **[FIX] Vínculo Pregunta-Historia**: Al buscar, la coincidencia entre los términos globales del cuento y las palabras de la pregunta ahora es mucho más fuerte, eliminando la confusión entre historias similares.
+
 ### v1.5.0 — Coherencia Temática y Bloqueo de Interferencia (Anti-Mixing)
 - **[NUEVO] Filtrado por Ancla Temática**: El motor ahora elige un "Lead Snippet" (Ancla) y bloquea cualquier fragmento adicional que no sea coherente con el tema principal. Esto evita que historias diferentes (ej. dos cuentos distintos sobre llaves) se mezclen en la misma respuesta.
 - **[NUEVO] Umbral de Relevancia Dinámico**: Se aumentó la exigencia de similitud combinada a 0.42, garantizando que solo la información de alta calidad llegue al LLM.
