@@ -61,11 +61,9 @@ Requiere [Ollama](https://ollama.com/) corriendo localmente con un modelo instal
 ollama pull gemma3:4b
 ```
 
-## Uso rápido
+## Uso rápido (modo básico)
 
 ```python
-pip recallclaw
-
 from recallclaw import PositronicBrain
 
 memoria = PositronicBrain(db_path="mi_memoria.db")
@@ -81,6 +79,29 @@ print(respuesta)
 # Activar optimización automática en segundo plano (cada 24h)
 memoria.start_background_evolution(check_interval_hours=24.0)
 ```
+
+## Uso con cualquier IA (modo conversacional — 3 líneas)
+
+Esta es la forma recomendada para conectar RecallClaw a cualquier agente de IA:
+
+```python
+from recallclaw import PositronicBrain
+
+brain = PositronicBrain(db_path="mi_memoria.db", llm_model="gemma3:4b")
+
+# Al recibir un mensaje del usuario:
+contexto = brain.get_context_for(user_message)    # 1. Busca recuerdos y arma el system prompt
+ai_response = mi_llm.chat(system=contexto, prompt=user_message)  # 2. Tu IA responde con contexto
+brain.memorize_user_input(user_message)            # 3. Solo guarda el input del usuario
+```
+
+### Métodos de alto nivel disponibles
+
+| Método | Descripción |
+|---|---|
+| `memorize_user_input(msg)` | Guarda SOLO el input del usuario. Filtra emojis, mensajes triviales y respuestas de IA automáticamente. |
+| `memorize_conversation(user_input, ai_response)` | Acepta el turno completo pero descarta la respuesta de la IA. Solo persiste lo que dijo el usuario. |
+| `get_context_for(question)` | Busca en la memoria vectorial y entrega un `system_prompt` listo para inyectar en cualquier LLM. |
 
 ## Arquitectura
 

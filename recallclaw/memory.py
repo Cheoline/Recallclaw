@@ -68,6 +68,146 @@ class PositronicBrain:
             "compression_ratio": f"{100 - (len(' '.join(tokens)) / len(text) * 100):.1f}%" if len(text) > 0 else "0%"
         }
 
+    # ═══════════════════════════════════════════════════════════════════
+    # MÉTODOS DE ALTO NIVEL — Integración directa con agentes de IA
+    # Diseñados para que cualquier desarrollador conecte su IA en 3 líneas.
+    # ═══════════════════════════════════════════════════════════════════
+
+    # Palabras que indican falta de contenido semántico real (stop words de intención)
+    _TRIVIAL_INPUTS = {
+        "hola", "hi", "hello", "ok", "okey", "sí", "si", "no", "claro",
+        "gracias", "thanks", "ok gracias", "bye", "adios", "adiós",
+        "entendido", "perfecto", "listo", "dale", "bien", "bueno",
+        "vale", "ya", "eso", "ah", "eh", "uh", "mm", "mhm", "jaja",
+        "jajaja", "lol", "xd", "😊", "👍", "❤️"
+    }
+
+    # Prefijos comunes que identifican la respuesta de una IA en un turno concatenado
+    _AI_PREFIXES = ("ia:", "ai:", "asistente:", "assistant:", "bot:", "nexus:", "gemma:")
+
+    def _sanitize(self, text: str) -> str:
+        """Limpia el texto: elimina emojis y espacios sobrantes."""
+        import emoji
+        return emoji.replace_emoji(text, replace='').strip()
+
+    def _is_trivial(self, text: str) -> bool:
+        """Detecta si un mensaje no tiene contenido semántico valioso."""
+        return (
+            not text
+            or len(text) < 5
+            or text.lower().strip() in self._TRIVIAL_INPUTS
+        )
+
+    def _strip_ai_response(self, text: str) -> str:
+        """
+        Si el texto tiene el formato "Usuario: X\nIA: Y", extrae solo la parte del usuario.
+        También descarta líneas que comiencen con prefijos de IA.
+        """
+        lineas_validas = []
+        for linea in text.splitlines():
+            lower = linea.lower().strip()
+            # Descartar líneas que sean la voz de la IA
+            if any(lower.startswith(p) for p in self._AI_PREFIXES):
+                continue
+            # Si la línea empieza con "usuario:" solo conservamos su contenido
+            for prefix in ("usuario:", "user:", "humano:", "human:"):
+                if lower.startswith(prefix):
+                    linea = linea[len(prefix):].strip()
+                    break
+            lineas_validas.append(linea)
+        return " ".join(lineas_validas).strip()
+
+    def memorize_user_input(self, user_message: str, context: str = None) -> dict | None:
+        """
+        Método de alto nivel para agentes de IA.
+        Guarda SOLO el mensaje del usuario, aplicando todas las reglas de calidad:
+        - Filtra emojis automáticamente.
+        - Ignora mensajes triviales o sin contenido semántico ("hola", "ok", etc.).
+        - Descarta respuestas de la IA si se pasan por error.
+        - Solo persiste información semánticamente valiosa.
+
+        Uso recomendado (la forma más simple de conectar cualquier IA):
+            contexto = brain.get_context_for(user_message)
+            ai_response = mi_llm.chat(system=contexto, prompt=user_message)
+            brain.memorize_user_input(user_message)  # ← Solo esto.
+
+        Retorna el dict de memorize() si se guardó, o None si fue descartado.
+        """
+        clean = self._sanitize(user_message)
+        clean = self._strip_ai_response(clean)
+
+        if self._is_trivial(clean):
+            print(f"[*] Mensaje descartado por falta de contenido semántico: '{user_message}'")
+            return None
+
+        return self.memorize(clean, context=context, auto_context=(context is None))
+
+    def memorize_conversation(self, user_input: str, ai_response: str = "", context: str = None) -> dict | None:
+        """
+        Método de alto nivel para conversaciones completas.
+        Acepta el turno completo (usuario + respuesta de la IA), pero internamente:
+        - Extrae y guarda SOLO los hechos del user_input.
+        - Descarta completamente la respuesta de la IA para no contaminar la memoria.
+        - Aplica todas las reglas de filtrado (emojis, trivialidad, etc.).
+
+        Uso recomendado:
+            brain.memorize_conversation(user_input=mensaje_usuario, ai_response=respuesta_ia)
+        """
+        # La respuesta de la IA se descarta silenciosamente — solo el usuario aporta hechos.
+        _ = ai_response
+        return self.memorize_user_input(user_input, context=context)
+
+    def get_context_for(self, question: str, system_prefix: str = None) -> str:
+        """
+        El Asistente de Contexto: Busca en la memoria vectorial el recuerdo más relevante
+        y lo entrega formateado como un system_prompt listo para inyectar en cualquier LLM.
+
+        Uso recomendado:
+            contexto = brain.get_context_for(user_message)
+            respuesta = mi_llm.chat(system=contexto, prompt=user_message)
+
+        Parámetros:
+            question:      El mensaje del usuario que servirá como consulta de búsqueda.
+            system_prefix: Texto introductorio opcional para personalizar el system prompt.
+                           Por defecto usa: "Eres un asistente con memoria. Usa estos recuerdos..."
+        """
+        print(f"[*] Buscando contexto para: '{question}'")
+
+        if system_prefix is None:
+            system_prefix = (
+                "Eres un asistente con memoria persistente. "
+                "Usa los siguientes recuerdos como contexto para responder con precisión. "
+                "Si el recuerdo no es relevante para la pregunta, ignóralo."
+            )
+
+        all_hashes = self.db.get_all_memory_hashes()
+        if not all_hashes:
+            return system_prefix
+
+        best_matches = self.judge.search_best_memory(question, all_hashes, top_k=3)
+        if not best_matches:
+            return system_prefix
+
+        fragmentos = []
+        for score, memory_id in best_matches:
+            if score < 0.25:
+                continue
+            memoria = self.recall(memory_id)
+            if "error" not in memoria:
+                texto = memoria.get("original_text") or memoria.get("reconstructed_lac", "")
+                if texto:
+                    fragmentos.append(f"- {texto}")
+
+        if not fragmentos:
+            return system_prefix
+
+        recuerdos_str = "\n".join(fragmentos)
+        system_prompt = f"{system_prefix}\n\nRecuerdos relevantes:\n{recuerdos_str}"
+        print(f"[*] Contexto generado con {len(fragmentos)} recuerdo(s).")
+        return system_prompt
+
+    # ═══════════════════════════════════════════════════════════════════
+
     def recall(self, memory_id: int) -> dict:
         """
         Recupera un recuerdo desde el grafo usando su ID.
