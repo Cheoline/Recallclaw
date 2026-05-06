@@ -54,6 +54,8 @@ ollama pull llama3.2:1b
 ## Uso rápido
 
 ```python
+pip ricallclaw
+
 from recallclaw import PositronicBrain
 
 memoria = PositronicBrain(db_path="mi_memoria.db")
