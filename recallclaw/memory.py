@@ -36,16 +36,14 @@ class PositronicBrain:
         para evitar interferencias semánticas tras los ciclos de sueño.
         """
         import emoji
-        # Solución a soporte de emojis: sanitización nativa
-        text = emoji.replace_emoji(text, replace='')
-        
-        # Solución a Interferencia Semántica: Marcador de contexto automático
+        # Sanitización de emojis
+        text = emoji.replace_emoji(text, replace='').strip()
+
+        # Solución a Interferencia Semántica: Etiquetado de sujeto inteligente
         if context:
             text = f"[CONTEXTO: {context}] {text}"
         elif auto_context and text.strip():
-            palabras = text.split()
-            contexto_breve = " ".join(palabras[:5])
-            text = f"[CONTEXTO: {contexto_breve}] {text}"
+            text = f"[{self._detect_subject_tag(text)}] {text}"
 
         print(f"[*] Inyectando recuerdo original: '{text}'")
         
@@ -67,6 +65,42 @@ class PositronicBrain:
             "compressed_tokens": tokens,
             "compression_ratio": f"{100 - (len(' '.join(tokens)) / len(text) * 100):.1f}%" if len(text) > 0 else "0%"
         }
+
+    # Lista de indicadores de primera persona (el usuario habla de sí mismo)
+    _FIRST_PERSON_MARKERS = {
+        "yo", "me", "mi", "mí", "conmigo", "soy", "tengo", "vivo", "trabajo",
+        "llamo", "llaman", "nací", "quiero", "pienso", "creo", "siento",
+        "my name", "i am", "i'm", "i have"
+    }
+    # Indicadores de que se habla de un tercero
+    _THIRD_PERSON_MARKERS = {
+        "su", "sus", "él", "ella", "ellos", "ellas", "él", "hermano", "hermana",
+        "padre", "madre", "amigo", "amiga", "jefe", "esposo", "esposa",
+        "hijo", "hija", "primo", "prima", "vecino", "colega"
+    }
+
+    def _detect_subject_tag(self, text: str) -> str:
+        """
+        Detecta si el texto habla sobre el propio usuario (primera persona)
+        o sobre un tercero, y retorna una etiqueta de sujeto precisa.
+        Esto evita que el motor mezcle hechos del usuario con hechos de otras personas.
+        """
+        words = set(text.lower().split())
+
+        is_first_person = bool(words & self._FIRST_PERSON_MARKERS)
+        is_third_person = bool(words & self._THIRD_PERSON_MARKERS)
+
+        if is_first_person and not is_third_person:
+            return "SUJETO:YO"
+        elif is_third_person and not is_first_person:
+            # Intentamos capturar el nombre del tercero de la frase
+            return "SUJETO:TERCERO"
+        elif is_first_person and is_third_person:
+            return "SUJETO:YO+TERCERO"
+        else:
+            # Fallback genérico con las primeras 4 palabras
+            palabras = text.split()
+            return f"CONTEXTO:{' '.join(palabras[:4])}"
 
     # ═══════════════════════════════════════════════════════════════════
     # MÉTODOS DE ALTO NIVEL — Integración directa con agentes de IA
@@ -244,6 +278,12 @@ class PositronicBrain:
             
         score, memory_id = best_matches[0]
         print(f"[*] Recuerdo más relevante encontrado: ID {memory_id} (Similitud: {score:.2f})")
+
+        # Umbral mínimo de confianza: si el mejor recuerdo no es suficientemente relevante,
+        # es mejor admitir que no se sabe que mezclar hechos equivocados.
+        if score < 0.40:
+            print(f"[*] Similitud demasiado baja ({score:.2f}). Rechazando para evitar mezcla de recuerdos.")
+            return "No tengo un recuerdo lo suficientemente claro sobre eso."
         
         # 3. Extraer la memoria (Puede ser el texto original o los tokens si ya fue consolidada)
         memoria_recuperada = self.recall(memory_id)
@@ -255,15 +295,18 @@ class PositronicBrain:
             texto_crudo = memoria_recuperada["reconstructed_lac"]
             print(f"[*] El Bibliotecario está leyendo una memoria consolidada: {texto_crudo}")
         
-        # 4. Formular el prompt para el LLM
-        prompt = f"""Instrucciones estrictas:
-- Responde en español únicamente con la información del recuerdo.
-- NO escribas frases como 'La respuesta es:', 'Según el recuerdo:', ni ningún encabezado o introducción.
-- NO pongas nada después de la respuesta.
-- Si el recuerdo tiene códigos técnicos cortos, interprétalos como conceptos de seguridad o redes.
-- Si la respuesta no está en el recuerdo, responde solo: 'No tengo esa información.'
+        # 4. Formular el prompt para el LLM — Instrucciones estrictas de sujeto
+        prompt = f"""Eres un sistema de recuperación de memoria. Tu única función es responder la pregunta usando EXCLUSIVAMENTE el recuerdo proporcionado.
 
-Recuerdo: {texto_crudo}
+REGLAS ESTRICTAS (no las rompas bajo ningún concepto):
+1. Responde SOLO con la información del recuerdo. Nada más.
+2. Presta atención al SUJETO del recuerdo. Si el recuerdo habla de una tercera persona (hermano, amigo, etc.), NO confundas sus datos con los del usuario.
+3. Si la pregunta es sobre "yo" o "me" y el recuerdo habla de otra persona, responde: 'No tengo ese dato del usuario en mis registros.'
+4. NO inventes, NO supongas, NO mezcles datos de distintas personas.
+5. Responde en español, de forma directa y breve.
+6. Si la información no está en el recuerdo, responde solo: 'No tengo esa información.'
+
+Recuerdo disponible: {texto_crudo}
 Pregunta: {question}
 Respuesta directa:"""
 
