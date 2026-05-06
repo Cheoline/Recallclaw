@@ -17,6 +17,7 @@ El sistema simula los ciclos biológicos de la memoria humana:
 - **Compresión Atómica (LAC)**: Reduce texto a tokens semánticos mínimos usando análisis morfológico NLP (spaCy). Ejemplo: `"El doctor recomendó agua"` → `doctorM recomendó aguaF`
 - **Almacenamiento Relacional**: Grafo SQLite con deduplicación de palabras. Una palabra = un ID. Si 1.000 recuerdos usan la palabra "agua", se guarda una sola vez.
 - **Búsqueda Vectorial (RAG)**: Convierte preguntas en vectores matemáticos y los compara con la memoria almacenada para recuperar el recuerdo más relevante.
+- **Prevención de Interferencia Semántica**: Etiqueta automáticamente los recuerdos con "Anclas de Contexto" para evitar que el LLM mezcle historias diferentes al recuperarlas tras los ciclos de sueño.
 - **Validación Semántica**: Un Juez interno verifica que cualquier compresión nueva mantenga el mismo significado original antes de guardarla permanentemente.
 - **Sueño Automático**: Un proceso en segundo plano ejecuta ciclos de consolidación y optimización de memoria de forma autónoma.
 - **La Colmena**: Intercambio criptográfico de vocabulario comprimido entre múltiples instancias (SHA-256). Las IAs comparten reglas de compresión sin compartir sus recuerdos privados.
@@ -55,9 +56,9 @@ python -m spacy download es_core_news_sm
 
 > **Nota sobre el modelo matemático:** La primera vez que ejecutes RecallClaw, la librería `sentence-transformers` descargará automáticamente el modelo de IA vectorial (`paraphrase-multilingual-MiniLM-L12-v2`, aprox. 470 MB). Solo requiere internet la primera vez.
 
-Requiere [Ollama](https://ollama.com/) corriendo localmente con un modelo instalado:
+Requiere [Ollama](https://ollama.com/) corriendo localmente con un modelo instalado. Por defecto buscará `gemma3:4b`, pero es totalmente agnóstico y configurable:
 ```bash
-ollama pull llama3.2:1b
+ollama pull gemma3:4b
 ```
 
 ## Uso rápido
