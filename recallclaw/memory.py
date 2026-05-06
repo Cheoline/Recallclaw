@@ -7,11 +7,11 @@ from .daemon import SubconsciousDaemon
 from .sync_engine import SyncEngine
 
 class PositronicBrain:
-    def __init__(self, db_path: str = "positronic_brain.db", max_usage_limit: int = 1000):
+    def __init__(self, db_path: str = "positronic_brain.db", max_usage_limit: int = 1000, llm_model: str = "gemma3:4b"):
         self.db = RecallClawDB(db_path=db_path, max_usage_limit=max_usage_limit)
         self.lac = LACEngine()
         self.judge = SemanticJudge()
-        self.llm = LLMConnector()
+        self.llm = LLMConnector(default_model=llm_model)
         self.evolver = Evolver(self)
         self.daemon = SubconsciousDaemon(self)
         self.colmena = SyncEngine(self)
@@ -35,6 +35,10 @@ class PositronicBrain:
         Se puede proveer un `context` explícito, o dejar que el motor infiera uno (auto_context)
         para evitar interferencias semánticas tras los ciclos de sueño.
         """
+        import emoji
+        # Solución a soporte de emojis: sanitización nativa
+        text = emoji.replace_emoji(text, replace='')
+        
         # Solución a Interferencia Semántica: Marcador de contexto automático
         if context:
             text = f"[CONTEXTO: {context}] {text}"

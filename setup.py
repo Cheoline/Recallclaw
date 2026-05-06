@@ -19,6 +19,7 @@ setup(
         "torch>=2.0.0",
         "numpy>=1.24.0",
         "requests>=2.28.0",
+        "emoji>=2.0.0",
     ],
     python_requires=">=3.9",
     classifiers=[
